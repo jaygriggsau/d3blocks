@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>d3blocks — 3D Block Builder</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="ui">
+    <div class="panel">
+      <h1>d3blocks</h1>
+      <p class="hint">Click to place · Shift+Click to remove · Drag to orbit · Scroll to zoom</p>
+
+      <div class="row">
+        <label>Color</label>
+        <div id="palette"></div>
+      </div>
+
+      <div class="row">
+        <label for="picker">Custom</label>
+        <input type="color" id="picker" value="#5ec8ff" />
+      </div>
+
+      <div class="row buttons">
+        <button id="save">Save</button>
+        <button id="load">Load</button>
+        <button id="clear">Clear</button>
+        <button id="export">Export JSON</button>
+      </div>
+
+      <div class="row buttons">
+        <button id="toggleGrid">Toggle Grid</button>
+        <button id="screenshot">Screenshot</button>
+      </div>
+
+      <p class="count"><span id="blockCount">0</span> blocks</p>
+    </div>
+  </div>
+
+  <canvas id="scene"></canvas>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
