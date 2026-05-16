@@ -4,10 +4,15 @@ A 3D voxel block builder in the browser. Click to place blocks, Shift+Click to r
 
 ## Features
 
+- **Select / Place tools** — `V` to select, `B` to place
+- **Transform gizmo** — `W` move, `E` rotate, `R` scale (free-form, off-grid)
+- **Multi-select** — Shift-click adds/removes; `Ctrl/Cmd+A` selects all
+- **Undo / redo** — `Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z` or `Ctrl/Cmd+Y`
+- **Duplicate** — `Ctrl/Cmd+D` offsets a copy of the selection
+- **Snap to grid** toggle for translate / rotate (15°) / scale (0.25 steps)
 - 10 shape primitives: cube, slab, slope, corner, pyramid, cylinder, cone, sphere, torus, dome
-- Per-block Y-axis rotation (press **R**) for slopes & corners
-- `[` / `]` cycle the current shape
-- 12-color palette plus full custom color picker
+- `[` / `]` cycle shapes
+- 12-color palette plus full custom color picker (applies to selection)
 - Save / load to `localStorage`, JSON export, PNG screenshot
 - **STL export** (binary) ready for slicing & 3D printing
 - Soft shadows, fog, orbit camera

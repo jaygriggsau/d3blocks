@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>d3blocks — 3D Block Builder</title>
+  <title>d3blocks — 3D CAD</title>
   <link rel="stylesheet" href="styles.css" />
   <script type="importmap">
     {
@@ -18,7 +18,26 @@
   <div id="ui">
     <div class="panel">
       <h1>d3blocks</h1>
-      <p class="hint">Click to place · Shift+Click to remove · Drag to orbit · <b>R</b> to rotate · <b>[ ]</b> cycle shape</p>
+      <p class="hint">
+        <b>V</b> Select · <b>B</b> Place · <b>W/E/R</b> Move/Rotate/Scale · <b>Del</b> delete · <b>Ctrl+D</b> duplicate · <b>Ctrl+Z/Y</b> undo/redo
+      </p>
+
+      <div class="row col">
+        <label>Tool</label>
+        <div id="tools">
+          <div class="tool" data-tool="select">Select</div>
+          <div class="tool" data-tool="place">Place</div>
+        </div>
+      </div>
+
+      <div class="row col" id="transformRow">
+        <label>Transform</label>
+        <div id="transformModes">
+          <div class="tool" data-mode="translate">Move</div>
+          <div class="tool" data-mode="rotate">Rotate</div>
+          <div class="tool" data-mode="scale">Scale</div>
+        </div>
+      </div>
 
       <div class="row col">
         <label>Shape</label>
@@ -35,10 +54,21 @@
         <input type="color" id="picker" value="#5ec8ff" />
       </div>
 
+      <div class="row checkboxes">
+        <label class="check"><input type="checkbox" id="snap" checked /> Snap to grid</label>
+      </div>
+
       <div class="row buttons">
         <button id="save">Save</button>
         <button id="load">Load</button>
         <button id="clear">Clear</button>
+      </div>
+
+      <div class="row buttons">
+        <button id="undo">Undo</button>
+        <button id="redo">Redo</button>
+        <button id="duplicate">Duplicate</button>
+        <button id="deleteBtn">Delete</button>
       </div>
 
       <div class="row buttons">
@@ -51,7 +81,7 @@
         <button id="toggleGrid">Toggle Grid</button>
       </div>
 
-      <p class="count"><span id="blockCount">0</span> blocks</p>
+      <p class="count"><span id="blockCount">0</span> objects · <span id="selCount">0</span> selected</p>
     </div>
   </div>
 

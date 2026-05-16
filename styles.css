@@ -98,6 +98,54 @@ h1 {
   color: #fff;
 }
 
+#tools, #transformModes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  width: 100%;
+}
+
+#tools {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.tool {
+  background: #1f2935;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 4px;
+  font-size: 11px;
+  color: #cdd6e0;
+  cursor: pointer;
+  text-align: center;
+  user-select: none;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.tool:hover { background: #2a3645; }
+.tool.active {
+  background: #2f4358;
+  border-color: #5ec8ff;
+  color: #fff;
+}
+
+.checkboxes {
+  font-size: 12px;
+  color: #cdd6e0;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  width: auto;
+}
+
+.check input { margin: 0; }
+
+#transformRow.hidden { display: none; }
+
 #palette {
   display: flex;
   gap: 6px;

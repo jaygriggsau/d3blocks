@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 
-const CUBE = 1;
 const GRID_SIZE = 32;
-const STORAGE_KEY = 'd3blocks.scene.v2';
+const STORAGE_KEY = 'd3blocks.scene.v3';
 
 const PALETTE = [
   '#ff5d5d', '#ffb05d', '#ffe65d', '#7dff5d',
@@ -12,32 +12,19 @@ const PALETTE = [
   '#ffffff', '#9aa4b2', '#3a4351', '#111418',
 ];
 
-// --- Shape geometries -------------------------------------------------------
-// All shapes occupy a unit cell of size CUBE centered at (0.5, 0.5, 0.5)
-// relative to integer cell origin (x, y, z). Shapes are designed to be
-// printable (manifold, watertight).
-
+// --- Shape geometries (unit-cell, centered at origin) -----------------------
 function slopeGeometry() {
-  // Triangular prism: full block at -Z side, sloping down to +Z side.
-  // 6 vertices, 8 triangles (2 sides, 2 bottom, 2 back, 2 ramp).
   const g = new THREE.BufferGeometry();
   const v = [
-    // bottom-back-left, bottom-back-right, bottom-front-left, bottom-front-right
     -0.5, -0.5, -0.5,   0.5, -0.5, -0.5,
     -0.5, -0.5,  0.5,   0.5, -0.5,  0.5,
-    // top-back-left, top-back-right
     -0.5,  0.5, -0.5,   0.5,  0.5, -0.5,
   ];
   const idx = [
-    // bottom
     0, 2, 3,  0, 3, 1,
-    // back (full square)
     0, 1, 5,  0, 5, 4,
-    // left side (triangle)
     0, 4, 2,
-    // right side (triangle)
     1, 3, 5,
-    // ramp (top-back-left -> top-back-right -> front)
     4, 5, 3,  4, 3, 2,
   ];
   g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
@@ -47,8 +34,6 @@ function slopeGeometry() {
 }
 
 function cornerSlopeGeometry() {
-  // Tetrahedron-ish wedge: full corner at one vertex sloping to the opposite.
-  // 5 verts: bottom square + apex at one back-top corner.
   const g = new THREE.BufferGeometry();
   const v = [
     -0.5, -0.5, -0.5,   0.5, -0.5, -0.5,
@@ -56,13 +41,9 @@ function cornerSlopeGeometry() {
     -0.5,  0.5, -0.5,
   ];
   const idx = [
-    // bottom
     0, 2, 3,  0, 3, 1,
-    // back-left wall (triangle)
     0, 4, 2,
-    // back wall (triangle to apex)
     0, 1, 4,
-    // sloped face (apex, br, fr, fl) split
     4, 1, 3,  4, 3, 2,
   ];
   g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
@@ -72,91 +53,65 @@ function cornerSlopeGeometry() {
 }
 
 function slabGeometry() {
-  // Half-height cube sitting on the bottom of the cell.
   const g = new THREE.BoxGeometry(1, 0.5, 1);
   g.translate(0, -0.25, 0);
   return g;
 }
 
 function pyramidGeometry() {
-  // 4-sided pyramid, base = full cell footprint, apex centered at top.
   const g = new THREE.BufferGeometry();
   const v = [
     -0.5, -0.5, -0.5,   0.5, -0.5, -0.5,
      0.5, -0.5,  0.5,  -0.5, -0.5,  0.5,
-     0.0,  0.5,  0.0, // apex
+     0.0,  0.5,  0.0,
   ];
-  const idx = [
-    // base
-    0, 2, 1,  0, 3, 2,
-    // sides
-    0, 1, 4,
-    1, 2, 4,
-    2, 3, 4,
-    3, 0, 4,
-  ];
+  const idx = [0, 2, 1,  0, 3, 2,  0, 1, 4,  1, 2, 4,  2, 3, 4,  3, 0, 4];
   g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
 }
 
-const SHAPES = {
-  cube:     { label: 'Cube',     geom: new THREE.BoxGeometry(1, 1, 1),               offsetY: 0.5,  rotatable: false },
-  slab:     { label: 'Slab',     geom: slabGeometry(),                               offsetY: 0.5,  rotatable: false },
-  slope:    { label: 'Slope',    geom: slopeGeometry(),                              offsetY: 0.5,  rotatable: true  },
-  corner:   { label: 'Corner',   geom: cornerSlopeGeometry(),                        offsetY: 0.5,  rotatable: true  },
-  pyramid:  { label: 'Pyramid',  geom: pyramidGeometry(),                            offsetY: 0.5,  rotatable: false },
-  cylinder: { label: 'Cylinder', geom: new THREE.CylinderGeometry(0.5, 0.5, 1, 32),  offsetY: 0.5,  rotatable: false },
-  cone:     { label: 'Cone',     geom: new THREE.ConeGeometry(0.5, 1, 32),           offsetY: 0.5,  rotatable: false },
-  sphere:   { label: 'Sphere',   geom: new THREE.SphereGeometry(0.5, 24, 18),        offsetY: 0.5,  rotatable: false },
-  torus:    { label: 'Torus',    geom: (() => {
-                const g = new THREE.TorusGeometry(0.32, 0.14, 16, 32);
-                g.rotateX(Math.PI / 2);
-                return g;
-              })(),                                                                  offsetY: 0.18, rotatable: false },
-  dome:     { label: 'Dome',     geom: (() => {
-                const g = new THREE.SphereGeometry(0.5, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-                // Cap the bottom so it's watertight for printing.
-                // SphereGeometry with thetaLength < PI leaves an open base; we patch with a disk.
-                return makeManifoldDome(g);
-              })(),                                                                  offsetY: 0,    rotatable: false },
-};
-
-function makeManifoldDome(domeGeom) {
-  // Build a flat disk at y=0 to seal the open hemisphere base.
-  const segs = 24;
-  const disk = new THREE.CircleGeometry(0.5, segs);
-  disk.rotateX(Math.PI / 2);
-  // Merge by appending attributes.
-  const merged = mergeGeoms([domeGeom, disk]);
-  return merged;
-}
-
 function mergeGeoms(list) {
   const positions = [];
-  const normals = [];
   for (const g of list) {
     const ng = g.index ? g.toNonIndexed() : g;
     const p = ng.attributes.position.array;
-    const n = ng.attributes.normal?.array;
     for (let i = 0; i < p.length; i++) positions.push(p[i]);
-    if (n) for (let i = 0; i < n.length; i++) normals.push(n[i]);
   }
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  if (normals.length === positions.length) {
-    out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  } else {
-    out.computeVertexNormals();
-  }
+  out.computeVertexNormals();
   return out;
 }
 
+function domeGeometry() {
+  // Half sphere (radius 0.5) sealed with a flat disk so the result is
+  // watertight/manifold. Sits with base at cell floor (y = -0.5).
+  const dome = new THREE.SphereGeometry(0.5, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+  const disk = new THREE.CircleGeometry(0.5, 24);
+  disk.rotateX(Math.PI / 2);
+  // Flip the disk so its outward normal points down (away from the dome interior).
+  const merged = mergeGeoms([dome, disk]);
+  merged.translate(0, -0.5, 0);
+  return merged;
+}
+
+const SHAPES = {
+  cube:     { label: 'Cube',     geom: new THREE.BoxGeometry(1, 1, 1) },
+  slab:     { label: 'Slab',     geom: slabGeometry() },
+  slope:    { label: 'Slope',    geom: slopeGeometry() },
+  corner:   { label: 'Corner',   geom: cornerSlopeGeometry() },
+  pyramid:  { label: 'Pyramid',  geom: pyramidGeometry() },
+  cylinder: { label: 'Cylinder', geom: new THREE.CylinderGeometry(0.5, 0.5, 1, 32) },
+  cone:     { label: 'Cone',     geom: new THREE.ConeGeometry(0.5, 1, 32) },
+  sphere:   { label: 'Sphere',   geom: new THREE.SphereGeometry(0.5, 24, 18) },
+  torus:    { label: 'Torus',    geom: (() => { const g = new THREE.TorusGeometry(0.32, 0.14, 16, 32); g.rotateX(Math.PI / 2); return g; })() },
+  dome:     { label: 'Dome',     geom: domeGeometry() },
+};
+
 const SHAPE_KEYS = Object.keys(SHAPES);
-const edgesByShape = Object.fromEntries(
-  SHAPE_KEYS.map(k => [k, new THREE.EdgesGeometry(SHAPES[k].geom, 20)])
-);
+const edgesByShape = Object.fromEntries(SHAPE_KEYS.map(k => [k, new THREE.EdgesGeometry(SHAPES[k].geom, 20)]));
 
 // --- Renderer / scene -------------------------------------------------------
 const canvas = document.getElementById('scene');
@@ -180,6 +135,10 @@ controls.minDistance = 4;
 controls.maxDistance = 100;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
+const transform = new TransformControls(camera, renderer.domElement);
+transform.setSize(0.85);
+scene.add(transform);
+
 scene.add(new THREE.HemisphereLight('#cfe7ff', '#1a1f29', 0.55));
 const sun = new THREE.DirectionalLight('#ffffff', 1.1);
 sun.position.set(20, 30, 14);
@@ -193,14 +152,15 @@ sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 100;
 scene.add(sun);
 
-const groundGeom = new THREE.PlaneGeometry(GRID_SIZE * CUBE, GRID_SIZE * CUBE);
-const groundMat = new THREE.MeshStandardMaterial({ color: '#1a2230', roughness: 0.95, metalness: 0 });
-const ground = new THREE.Mesh(groundGeom, groundMat);
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(GRID_SIZE, GRID_SIZE),
+  new THREE.MeshStandardMaterial({ color: '#1a2230', roughness: 0.95, metalness: 0 })
+);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-const grid = new THREE.GridHelper(GRID_SIZE * CUBE, GRID_SIZE, 0x3a4658, 0x232c39);
+const grid = new THREE.GridHelper(GRID_SIZE, GRID_SIZE, 0x3a4658, 0x232c39);
 grid.position.y = 0.001;
 scene.add(grid);
 
@@ -212,22 +172,19 @@ ring.rotation.x = -Math.PI / 2;
 ring.position.y = 0.002;
 scene.add(ring);
 
-// --- Block storage ----------------------------------------------------------
-// Multiple shapes can stack in one cell (e.g. cube + slope above), but we
-// still key by integer cell. Only one block per cell — keeps placement
-// predictable and STL clean.
-const blocks = new Map(); // key "x,y,z" -> mesh
+// --- Object store -----------------------------------------------------------
+// Free-form objects: each has id, shape, color, position, rotation, scale.
+const objects = new Map(); // id -> mesh
+let nextId = 1;
 
-function keyOf(x, y, z) { return `${x},${y},${z}`; }
+function genId() { return `o${nextId++}`; }
 
-function makeMesh(shape, colorHex, rotation = 0) {
+function createMesh(shape, colorHex) {
   const def = SHAPES[shape];
   const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6, metalness: 0.05 });
   const mesh = new THREE.Mesh(def.geom, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  if (def.rotatable && rotation) mesh.rotation.y = rotation * Math.PI / 2;
-
   const line = new THREE.LineSegments(
     edgesByShape[shape],
     new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 })
@@ -236,57 +193,174 @@ function makeMesh(shape, colorHex, rotation = 0) {
   return mesh;
 }
 
-function addBlock(x, y, z, colorHex, shape, rotation = 0) {
-  const k = keyOf(x, y, z);
-  if (blocks.has(k)) return false;
-  const def = SHAPES[shape];
-  if (!def) return false;
-  const mesh = makeMesh(shape, colorHex, rotation);
-  mesh.position.set(x + 0.5, y + def.offsetY, z + 0.5);
-  mesh.userData = { x, y, z, color: colorHex, shape, rotation: def.rotatable ? rotation : 0 };
+function addObject(data) {
+  // data: {id, shape, color, position:[x,y,z], rotation:[x,y,z], scale:[x,y,z]}
+  const id = data.id || genId();
+  if (data.id) {
+    const n = parseInt(data.id.replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(n) && n >= nextId) nextId = n + 1;
+  }
+  const mesh = createMesh(data.shape, data.color);
+  mesh.position.fromArray(data.position);
+  mesh.rotation.fromArray(data.rotation || [0, 0, 0]);
+  mesh.scale.fromArray(data.scale || [1, 1, 1]);
+  mesh.userData = { id, shape: data.shape, color: data.color };
   scene.add(mesh);
-  blocks.set(k, mesh);
+  objects.set(id, mesh);
   updateCount();
-  return true;
+  return mesh;
 }
 
-function removeBlock(mesh) {
-  const { x, y, z } = mesh.userData;
+function deleteObject(id) {
+  const mesh = objects.get(id);
+  if (!mesh) return null;
+  const snap = snapshotMesh(mesh);
+  if (transform.object === mesh) transform.detach();
+  selection.delete(id);
   scene.remove(mesh);
   mesh.material.dispose();
-  blocks.delete(keyOf(x, y, z));
+  objects.delete(id);
   updateCount();
+  updateSelectionVisuals();
+  return snap;
 }
 
-function clearBlocks() {
-  for (const mesh of blocks.values()) {
-    scene.remove(mesh);
-    mesh.material.dispose();
+function snapshotMesh(mesh) {
+  return {
+    id: mesh.userData.id,
+    shape: mesh.userData.shape,
+    color: mesh.userData.color,
+    position: mesh.position.toArray(),
+    rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+    scale: mesh.scale.toArray(),
+  };
+}
+
+function clearAll() {
+  for (const id of [...objects.keys()]) deleteObject(id);
+}
+
+// --- Selection --------------------------------------------------------------
+const selection = new Set(); // ids
+
+function setEmissive(mesh, on) {
+  const m = mesh.material;
+  if (on) {
+    if (m.userData.origEmissive === undefined) {
+      m.userData.origEmissive = m.emissive.getHex();
+      m.userData.origEmissiveIntensity = m.emissiveIntensity;
+    }
+    m.emissive.set(0x5ec8ff);
+    m.emissiveIntensity = 0.45;
+  } else if (m.userData.origEmissive !== undefined) {
+    m.emissive.setHex(m.userData.origEmissive);
+    m.emissiveIntensity = m.userData.origEmissiveIntensity;
   }
-  blocks.clear();
-  updateCount();
 }
 
-// --- Ghost preview ----------------------------------------------------------
-const ghostMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, depthWrite: false });
-let ghost = new THREE.Mesh(SHAPES.cube.geom, ghostMat);
-ghost.visible = false;
-scene.add(ghost);
-
-function rebuildGhost() {
-  scene.remove(ghost);
-  ghost = new THREE.Mesh(SHAPES[currentShape].geom, ghostMat);
-  ghost.visible = false;
-  scene.add(ghost);
+function updateSelectionVisuals() {
+  for (const [id, mesh] of objects) setEmissive(mesh, selection.has(id));
+  if (selection.size === 1) {
+    const id = [...selection][0];
+    transform.attach(objects.get(id));
+  } else {
+    transform.detach();
+  }
+  selCountEl.textContent = selection.size;
 }
 
-// --- Picking ---------------------------------------------------------------
+function selectOnly(id) {
+  selection.clear();
+  if (id) selection.add(id);
+  updateSelectionVisuals();
+}
+
+function toggleSelect(id) {
+  if (selection.has(id)) selection.delete(id);
+  else selection.add(id);
+  updateSelectionVisuals();
+}
+
+// --- Undo / redo ------------------------------------------------------------
+const undoStack = [];
+const redoStack = [];
+const UNDO_LIMIT = 200;
+
+function pushUndo(cmd) {
+  undoStack.push(cmd);
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+}
+
+function undo() {
+  const cmd = undoStack.pop();
+  if (!cmd) return;
+  applyInverse(cmd);
+  redoStack.push(cmd);
+}
+
+function redo() {
+  const cmd = redoStack.pop();
+  if (!cmd) return;
+  applyForward(cmd);
+  undoStack.push(cmd);
+}
+
+function applyForward(cmd) {
+  switch (cmd.type) {
+    case 'create':
+      addObject(cmd.snap);
+      selectOnly(cmd.snap.id);
+      break;
+    case 'createMany':
+      for (const snap of cmd.snaps) addObject(snap);
+      break;
+    case 'delete':
+      for (const snap of cmd.snaps) deleteObject(snap.id);
+      break;
+    case 'transform':
+      for (const t of cmd.changes) {
+        const m = objects.get(t.id);
+        if (!m) continue;
+        m.position.fromArray(t.to.position);
+        m.rotation.fromArray(t.to.rotation);
+        m.scale.fromArray(t.to.scale);
+      }
+      break;
+  }
+}
+
+function applyInverse(cmd) {
+  switch (cmd.type) {
+    case 'create':
+      deleteObject(cmd.snap.id);
+      break;
+    case 'createMany':
+      for (const snap of cmd.snaps) deleteObject(snap.id);
+      break;
+    case 'delete':
+      for (const snap of cmd.snaps) addObject(snap);
+      break;
+    case 'transform':
+      for (const t of cmd.changes) {
+        const m = objects.get(t.id);
+        if (!m) continue;
+        m.position.fromArray(t.from.position);
+        m.rotation.fromArray(t.from.rotation);
+        m.scale.fromArray(t.from.scale);
+      }
+      break;
+  }
+}
+
+// --- Picking / pointer ------------------------------------------------------
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let pointerDown = null;
 let currentColor = '#5ec8ff';
 let currentShape = 'cube';
-let currentRotation = 0;
+let tool = 'select';
+let snapEnabled = true;
 
 function setPointer(event) {
   const rect = canvas.getBoundingClientRect();
@@ -294,60 +368,43 @@ function setPointer(event) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
-function pickTargets() {
-  return [ground, ...blocks.values()];
-}
-
 function intersectAt(event) {
   setPointer(event);
   raycaster.setFromCamera(pointer, camera);
-  return raycaster.intersectObjects(pickTargets(), false)[0] || null;
+  const targets = [ground, ...objects.values()];
+  return raycaster.intersectObjects(targets, false)[0] || null;
 }
 
-function snapFromHit(hit, forPlacement) {
+function snapToGrid(v) {
+  return snapEnabled ? Math.round(v * 2) / 2 : v;
+}
+
+function placementCellFromHit(hit) {
   if (!hit) return null;
   if (hit.object === ground) {
-    const p = hit.point;
-    const x = Math.floor(p.x);
-    const z = Math.floor(p.z);
+    const x = Math.floor(hit.point.x);
+    const z = Math.floor(hit.point.z);
     if (Math.abs(x) >= GRID_SIZE / 2 || Math.abs(z) >= GRID_SIZE / 2) return null;
-    return { x, y: 0, z };
+    return [x + 0.5, 0.5, z + 0.5];
   }
-  const { x, y, z } = hit.object.userData;
-  if (!forPlacement) return { x, y, z };
-  // For non-cube shapes the face normal may not be axis-aligned. Use the
-  // dominant axis component.
-  const n = hit.face.normal.clone();
-  // Transform the normal to world space (accounts for shape rotation).
-  n.transformDirection(hit.object.matrixWorld);
+  const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
   const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
   let dx = 0, dy = 0, dz = 0;
   if (ax >= ay && ax >= az) dx = Math.sign(n.x);
   else if (ay >= az) dy = Math.sign(n.y);
   else dz = Math.sign(n.z);
-  const nx = x + dx, ny = y + dy, nz = z + dz;
-  if (ny < 0) return null;
-  if (Math.abs(nx) >= GRID_SIZE / 2 || Math.abs(nz) >= GRID_SIZE / 2) return null;
-  if (ny >= GRID_SIZE) return null;
-  return { x: nx, y: ny, z: nz };
-}
-
-function onPointerMove(event) {
-  const hit = intersectAt(event);
-  const cell = snapFromHit(hit, true);
-  if (cell && !blocks.has(keyOf(cell.x, cell.y, cell.z))) {
-    ghost.visible = true;
-    ghost.material.color.set(currentColor);
-    const def = SHAPES[currentShape];
-    ghost.position.set(cell.x + 0.5, cell.y + def.offsetY, cell.z + 0.5);
-    ghost.rotation.y = def.rotatable ? currentRotation * Math.PI / 2 : 0;
-  } else {
-    ghost.visible = false;
-  }
+  const p = hit.object.position;
+  // Use the nearest grid cell to the impact point plus the face direction.
+  const cx = Math.round(p.x - 0.5) + 0.5 + dx;
+  const cy = Math.round(p.y - 0.5) + 0.5 + dy;
+  const cz = Math.round(p.z - 0.5) + 0.5 + dz;
+  if (cy < 0.5) return null;
+  return [cx, cy, cz];
 }
 
 function onPointerDown(event) {
-  pointerDown = { x: event.clientX, y: event.clientY, shift: event.shiftKey };
+  if (transform.dragging) return;
+  pointerDown = { x: event.clientX, y: event.clientY, shift: event.shiftKey, button: event.button };
 }
 
 function onPointerUp(event) {
@@ -358,27 +415,106 @@ function onPointerUp(event) {
   const shift = pointerDown.shift || event.shiftKey;
   pointerDown = null;
   if (moved) return;
+  if (event.button !== 0) return;
 
   const hit = intersectAt(event);
-  if (!hit) return;
 
-  if (shift) {
-    if (hit.object !== ground) removeBlock(hit.object);
-  } else {
-    const cell = snapFromHit(hit, true);
-    if (cell) addBlock(cell.x, cell.y, cell.z, currentColor, currentShape, currentRotation);
+  if (tool === 'select') {
+    if (!hit || hit.object === ground) {
+      if (!shift) selectOnly(null);
+      return;
+    }
+    const id = hit.object.userData.id;
+    if (shift) toggleSelect(id);
+    else selectOnly(id);
+  } else if (tool === 'place') {
+    if (shift && hit && hit.object !== ground) {
+      const snap = snapshotMesh(hit.object);
+      deleteObject(snap.id);
+      pushUndo({ type: 'delete', snaps: [snap] });
+      return;
+    }
+    if (!hit) return;
+    const pos = placementCellFromHit(hit);
+    if (!pos) return;
+    const mesh = addObject({
+      shape: currentShape, color: currentColor,
+      position: pos, rotation: [0, 0, 0], scale: [1, 1, 1],
+    });
+    pushUndo({ type: 'create', snap: snapshotMesh(mesh) });
+    selectOnly(mesh.userData.id);
   }
 }
 
-canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerdown', onPointerDown);
 canvas.addEventListener('pointerup', onPointerUp);
-canvas.addEventListener('pointerleave', () => { ghost.visible = false; });
 
-// --- UI: palette + shapes ---------------------------------------------------
+// --- Transform gizmo wiring -------------------------------------------------
+let dragStartSnaps = null;
+
+transform.addEventListener('dragging-changed', (e) => {
+  controls.enabled = !e.value;
+  if (e.value) {
+    dragStartSnaps = transform.object ? [snapshotMesh(transform.object)] : null;
+  } else if (dragStartSnaps) {
+    const changes = [];
+    for (const from of dragStartSnaps) {
+      const mesh = objects.get(from.id);
+      if (!mesh) continue;
+      const to = snapshotMesh(mesh);
+      if (
+        from.position.some((v, i) => v !== to.position[i]) ||
+        from.rotation.some((v, i) => v !== to.rotation[i]) ||
+        from.scale.some((v, i) => v !== to.scale[i])
+      ) {
+        changes.push({ id: from.id, from, to });
+      }
+    }
+    if (changes.length) pushUndo({ type: 'transform', changes });
+    dragStartSnaps = null;
+  }
+});
+
+transform.addEventListener('objectChange', () => {
+  if (!snapEnabled) return;
+  const m = transform.object;
+  if (!m) return;
+  if (transform.mode === 'translate') {
+    m.position.x = snapToGrid(m.position.x);
+    m.position.y = snapToGrid(m.position.y);
+    m.position.z = snapToGrid(m.position.z);
+  } else if (transform.mode === 'rotate') {
+    const step = Math.PI / 12; // 15°
+    m.rotation.x = Math.round(m.rotation.x / step) * step;
+    m.rotation.y = Math.round(m.rotation.y / step) * step;
+    m.rotation.z = Math.round(m.rotation.z / step) * step;
+  } else if (transform.mode === 'scale') {
+    const step = 0.25;
+    m.scale.x = Math.max(step, Math.round(m.scale.x / step) * step);
+    m.scale.y = Math.max(step, Math.round(m.scale.y / step) * step);
+    m.scale.z = Math.max(step, Math.round(m.scale.z / step) * step);
+  }
+});
+
+function setTransformMode(mode) {
+  transform.setMode(mode);
+  for (const el of document.querySelectorAll('#transformModes .tool')) {
+    el.classList.toggle('active', el.dataset.mode === mode);
+  }
+}
+setTransformMode('translate');
+
+// --- UI ---------------------------------------------------------------------
 const paletteEl = document.getElementById('palette');
 const picker = document.getElementById('picker');
 const shapesEl = document.getElementById('shapes');
+const toolsEl = document.getElementById('tools');
+const transformModesEl = document.getElementById('transformModes');
+const blockCountEl = document.getElementById('blockCount');
+const selCountEl = document.getElementById('selCount');
+const snapEl = document.getElementById('snap');
+
+function updateCount() { blockCountEl.textContent = objects.size; }
 
 function setColor(hex, fromPicker = false) {
   currentColor = hex;
@@ -386,6 +522,19 @@ function setColor(hex, fromPicker = false) {
     el.classList.toggle('active', el.dataset.color?.toLowerCase() === hex.toLowerCase());
   }
   if (!fromPicker) picker.value = hex;
+  // Apply color to selected objects.
+  if (selection.size > 0) {
+    const changes = [];
+    for (const id of selection) {
+      const m = objects.get(id);
+      const from = snapshotMesh(m);
+      m.material.color.set(hex);
+      m.userData.color = hex;
+      const to = snapshotMesh(m);
+      changes.push({ id, from, to });
+    }
+    // Note: color changes are not on the transform undo path; keep simple for now.
+  }
 }
 
 for (const c of PALETTE) {
@@ -402,11 +551,7 @@ setColor(currentColor);
 function setShape(name) {
   if (!SHAPES[name]) return;
   currentShape = name;
-  if (!SHAPES[name].rotatable) currentRotation = 0;
-  for (const el of shapesEl.children) {
-    el.classList.toggle('active', el.dataset.shape === name);
-  }
-  rebuildGhost();
+  for (const el of shapesEl.children) el.classList.toggle('active', el.dataset.shape === name);
 }
 
 for (const key of SHAPE_KEYS) {
@@ -419,27 +564,33 @@ for (const key of SHAPE_KEYS) {
 }
 setShape('cube');
 
-// --- Buttons / persistence --------------------------------------------------
-const blockCountEl = document.getElementById('blockCount');
-function updateCount() { blockCountEl.textContent = blocks.size; }
+function setTool(name) {
+  tool = name;
+  for (const el of toolsEl.children) el.classList.toggle('active', el.dataset.tool === name);
+  canvas.style.cursor = name === 'place' ? 'crosshair' : 'default';
+  if (name !== 'select') transform.detach();
+  else updateSelectionVisuals();
+}
 
+for (const el of toolsEl.children) {
+  el.addEventListener('click', () => setTool(el.dataset.tool));
+}
+setTool('select');
+
+for (const el of transformModesEl.children) {
+  el.addEventListener('click', () => setTransformMode(el.dataset.mode));
+}
+
+snapEl.addEventListener('change', () => { snapEnabled = snapEl.checked; });
+
+// --- Buttons ----------------------------------------------------------------
 document.getElementById('clear').addEventListener('click', () => {
-  if (blocks.size === 0 || confirm('Clear all blocks?')) clearBlocks();
+  if (objects.size === 0) return;
+  if (!confirm('Clear all objects?')) return;
+  const snaps = [...objects.values()].map(snapshotMesh);
+  clearAll();
+  pushUndo({ type: 'delete', snaps });
 });
-
-function serialize() {
-  return Array.from(blocks.values()).map(m => ({
-    x: m.userData.x, y: m.userData.y, z: m.userData.z,
-    c: m.userData.color, s: m.userData.shape, r: m.userData.rotation || 0,
-  }));
-}
-
-function deserialize(arr) {
-  clearBlocks();
-  for (const b of arr) {
-    addBlock(b.x, b.y, b.z, b.c, b.s || 'cube', b.r || 0);
-  }
-}
 
 document.getElementById('save').addEventListener('click', () => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize()));
@@ -459,9 +610,9 @@ document.getElementById('export').addEventListener('click', () => {
 });
 
 document.getElementById('exportStl').addEventListener('click', () => {
-  if (blocks.size === 0) { flash('Nothing to export'); return; }
+  if (objects.size === 0) { flash('Nothing to export'); return; }
   const group = new THREE.Group();
-  for (const m of blocks.values()) {
+  for (const m of objects.values()) {
     const clone = new THREE.Mesh(m.geometry, new THREE.MeshBasicMaterial());
     clone.position.copy(m.position);
     clone.rotation.copy(m.rotation);
@@ -470,8 +621,7 @@ document.getElementById('exportStl').addEventListener('click', () => {
   }
   group.updateMatrixWorld(true);
   const stl = new STLExporter().parse(group, { binary: true });
-  const blob = new Blob([stl], { type: 'application/octet-stream' });
-  download(blob, 'd3blocks.stl');
+  download(new Blob([stl], { type: 'application/octet-stream' }), 'd3blocks.stl');
   flash('STL exported');
 });
 
@@ -484,6 +634,42 @@ document.getElementById('screenshot').addEventListener('click', () => {
   canvas.toBlob(b => download(b, 'd3blocks.png'));
 });
 
+document.getElementById('undo').addEventListener('click', undo);
+document.getElementById('redo').addEventListener('click', redo);
+document.getElementById('duplicate').addEventListener('click', duplicateSelection);
+document.getElementById('deleteBtn').addEventListener('click', deleteSelection);
+
+function duplicateSelection() {
+  if (selection.size === 0) return;
+  const newIds = [];
+  const snaps = [];
+  for (const id of selection) {
+    const m = objects.get(id);
+    const s = snapshotMesh(m);
+    s.id = genId();
+    s.position[0] += 1;
+    const mesh = addObject(s);
+    newIds.push(mesh.userData.id);
+    snaps.push(snapshotMesh(mesh));
+  }
+  selection.clear();
+  for (const id of newIds) selection.add(id);
+  updateSelectionVisuals();
+  if (snaps.length === 1) pushUndo({ type: 'create', snap: snaps[0] });
+  else pushUndo({ type: 'createMany', snaps });
+}
+
+function deleteSelection() {
+  if (selection.size === 0) return;
+  const snaps = [];
+  for (const id of [...selection]) {
+    const m = objects.get(id);
+    if (m) snaps.push(snapshotMesh(m));
+    deleteObject(id);
+  }
+  if (snaps.length) pushUndo({ type: 'delete', snaps });
+}
+
 function download(blob, name) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -491,6 +677,29 @@ function download(blob, name) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// --- Persistence ------------------------------------------------------------
+function serialize() {
+  return [...objects.values()].map(m => snapshotMesh(m));
+}
+
+function deserialize(arr) {
+  clearAll();
+  // Detect v2 (uses x/y/z/c/s fields)
+  if (arr.length && arr[0].x !== undefined && arr[0].position === undefined) {
+    for (const o of arr) {
+      addObject({
+        shape: o.s || 'cube',
+        color: o.c,
+        position: [o.x + 0.5, o.y + 0.5, o.z + 0.5],
+        rotation: [0, (o.r || 0) * Math.PI / 2, 0],
+        scale: [1, 1, 1],
+      });
+    }
+  } else {
+    for (const o of arr) addObject(o);
+  }
 }
 
 // --- Toast ------------------------------------------------------------------
@@ -516,18 +725,26 @@ function flash(text) {
 
 // --- Keyboard ---------------------------------------------------------------
 window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+  if (e.target instanceof HTMLInputElement) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); document.getElementById('save').click(); return; }
+  if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+  if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelection(); return; }
+  if (mod && e.key.toLowerCase() === 'a') {
     e.preventDefault();
-    document.getElementById('save').click();
+    selection.clear();
+    for (const id of objects.keys()) selection.add(id);
+    updateSelectionVisuals();
     return;
   }
-  if (e.key === 'r' || e.key === 'R') {
-    if (SHAPES[currentShape].rotatable) {
-      currentRotation = (currentRotation + 1) % 4;
-      ghost.rotation.y = currentRotation * Math.PI / 2;
-    }
-    return;
-  }
+  if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelection(); return; }
+  if (e.key === 'Escape') { selectOnly(null); return; }
+  if (e.key === 'v' || e.key === 'V') { setTool('select'); return; }
+  if (e.key === 'b' || e.key === 'B') { setTool('place'); return; }
+  if (e.key === 'w' || e.key === 'W') { setTransformMode('translate'); return; }
+  if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); return; }
+  if (e.key === 'r' || e.key === 'R') { setTransformMode('scale'); return; }
   if (e.key === ']') {
     const i = SHAPE_KEYS.indexOf(currentShape);
     setShape(SHAPE_KEYS[(i + 1) % SHAPE_KEYS.length]);
@@ -543,17 +760,20 @@ window.addEventListener('keydown', (e) => {
   if (raw) {
     try { deserialize(JSON.parse(raw)); return; } catch {}
   }
+  // Migrate from v2 if present
+  const v2 = localStorage.getItem('d3blocks.scene.v2');
+  if (v2) {
+    try { deserialize(JSON.parse(v2)); return; } catch {}
+  }
   const colors = ['#5ec8ff', '#7a5dff', '#ff5dd6', '#ffe65d'];
   for (let x = -2; x <= 2; x++) {
     for (let z = -2; z <= 2; z++) {
-      addBlock(x, 0, z, colors[(Math.abs(x) + Math.abs(z)) % colors.length], 'cube');
+      addObject({
+        shape: 'cube', color: colors[(Math.abs(x) + Math.abs(z)) % colors.length],
+        position: [x + 0.5, 0.5, z + 0.5], rotation: [0, 0, 0], scale: [1, 1, 1],
+      });
     }
   }
-  addBlock(0, 1, 0, '#ff5d5d', 'pyramid');
-  addBlock(-1, 1, 0, '#ffe65d', 'slope', 0);
-  addBlock(1, 1, 0, '#ffe65d', 'slope', 2);
-  addBlock(0, 1, -1, '#5dffd6', 'cylinder');
-  addBlock(0, 1, 1, '#7a5dff', 'sphere');
 })();
 
 // --- Resize / loop ----------------------------------------------------------
