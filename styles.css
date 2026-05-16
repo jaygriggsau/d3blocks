@@ -144,7 +144,40 @@ h1 {
 
 .check input { margin: 0; }
 
-#transformRow.hidden { display: none; }
+#transformRow.hidden, #sketchRow.hidden { display: none; }
+
+#tools { grid-template-columns: repeat(3, 1fr); }
+
+.sub-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  align-items: center;
+}
+
+.sub-row label.inline {
+  width: auto;
+  font-size: 11px;
+  color: #8b95a3;
+}
+
+.sub-row input[type="number"] {
+  flex: 1;
+  background: #1f2935;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e6edf3;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.sub-row button { flex: 0 0 auto; }
+
+.hint.sub {
+  margin: 4px 0 0;
+  font-size: 10px;
+}
 
 #palette {
   display: flex;

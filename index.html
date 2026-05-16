@@ -19,7 +19,7 @@
     <div class="panel">
       <h1>d3blocks</h1>
       <p class="hint">
-        <b>V</b> Select · <b>B</b> Place · <b>W/E/R</b> Move/Rotate/Scale · <b>Del</b> delete · <b>Ctrl+D</b> duplicate · <b>Ctrl+Z/Y</b> undo/redo
+        <b>V</b> Select · <b>B</b> Place · <b>K</b> Sketch · <b>W/E/R</b> Move/Rotate/Scale · <b>Del</b> delete · <b>Ctrl+D</b> duplicate · <b>Ctrl+Z/Y</b> undo/redo
       </p>
 
       <div class="row col">
@@ -27,7 +27,27 @@
         <div id="tools">
           <div class="tool" data-tool="select">Select</div>
           <div class="tool" data-tool="place">Place</div>
+          <div class="tool" data-tool="sketch">Sketch</div>
         </div>
+      </div>
+
+      <div class="row col hidden" id="sketchRow">
+        <label>Sketch</label>
+        <div id="sketchTools">
+          <div class="tool" data-stool="rect">Rect</div>
+          <div class="tool" data-stool="circle">Circle</div>
+          <div class="tool" data-stool="poly">Polyline</div>
+        </div>
+        <div class="sub-row">
+          <label class="inline">Height</label>
+          <input type="number" id="extrudeHeight" value="1" min="0.1" step="0.1" />
+          <button id="extrudeBtn" disabled>Extrude</button>
+        </div>
+        <div class="sub-row">
+          <button id="finishPoly">Close</button>
+          <button id="cancelSketch">Cancel</button>
+        </div>
+        <p class="hint sub">Click to add points · Double-click or <b>Enter</b> to close polyline · <b>Esc</b> cancels</p>
       </div>
 
       <div class="row col" id="transformRow">

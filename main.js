@@ -179,18 +179,61 @@ let nextId = 1;
 
 function genId() { return `o${nextId++}`; }
 
-function createMesh(shape, colorHex) {
-  const def = SHAPES[shape];
+function createMesh(shape, colorHex, profile) {
+  let geom, edges, ownsGeom = false;
+  if (shape === 'extrusion') {
+    geom = buildExtrudeGeometry(profile);
+    edges = new THREE.EdgesGeometry(geom, 20);
+    ownsGeom = true;
+  } else {
+    geom = SHAPES[shape].geom;
+    edges = edgesByShape[shape];
+  }
   const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6, metalness: 0.05 });
-  const mesh = new THREE.Mesh(def.geom, mat);
+  const mesh = new THREE.Mesh(geom, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   const line = new THREE.LineSegments(
-    edgesByShape[shape],
+    edges,
     new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 })
   );
   mesh.add(line);
+  mesh.userData.ownsGeom = ownsGeom;
+  mesh.userData.ownsEdges = ownsGeom;
   return mesh;
+}
+
+function buildExtrudeGeometry(profile) {
+  let pts2d;
+  if (profile.type === 'rect') {
+    const [a, b] = profile.points;
+    const x1 = Math.min(a.x, b.x), x2 = Math.max(a.x, b.x);
+    const z1 = Math.min(a.z, b.z), z2 = Math.max(a.z, b.z);
+    pts2d = [[x1, z1], [x2, z1], [x2, z2], [x1, z2]];
+  } else if (profile.type === 'circle') {
+    const c = profile.points[0];
+    const r = profile.radius;
+    const segs = 48;
+    pts2d = [];
+    for (let i = 0; i < segs; i++) {
+      const a = i / segs * Math.PI * 2;
+      pts2d.push([c.x + Math.cos(a) * r, c.z + Math.sin(a) * r]);
+    }
+  } else {
+    pts2d = profile.points.map(p => [p.x, p.z]);
+  }
+  // Shape lives in conventional XY plane; we map world (x, z) → shape (x, -z)
+  // so a -PI/2 rotation about X lands the profile back on the world XZ ground
+  // with the extrusion rising in +Y.
+  let shapePts = pts2d.map(([x, z]) => new THREE.Vector2(x, -z));
+  if (THREE.ShapeUtils.isClockWise(shapePts)) shapePts = shapePts.slice().reverse();
+  const shape = new THREE.Shape(shapePts);
+  const geom = new THREE.ExtrudeGeometry(shape, {
+    depth: profile.height, bevelEnabled: false, curveSegments: 32,
+  });
+  geom.rotateX(-Math.PI / 2);
+  geom.computeVertexNormals();
+  return geom;
 }
 
 function addObject(data) {
@@ -200,11 +243,16 @@ function addObject(data) {
     const n = parseInt(data.id.replace(/[^0-9]/g, ''), 10);
     if (!isNaN(n) && n >= nextId) nextId = n + 1;
   }
-  const mesh = createMesh(data.shape, data.color);
+  const mesh = createMesh(data.shape, data.color, data.profile);
   mesh.position.fromArray(data.position);
   mesh.rotation.fromArray(data.rotation || [0, 0, 0]);
   mesh.scale.fromArray(data.scale || [1, 1, 1]);
-  mesh.userData = { id, shape: data.shape, color: data.color };
+  const owns = mesh.userData.ownsGeom;
+  mesh.userData = {
+    id, shape: data.shape, color: data.color,
+    profile: data.profile ? JSON.parse(JSON.stringify(data.profile)) : undefined,
+    ownsGeom: owns, ownsEdges: owns,
+  };
   scene.add(mesh);
   objects.set(id, mesh);
   updateCount();
@@ -219,6 +267,8 @@ function deleteObject(id) {
   selection.delete(id);
   scene.remove(mesh);
   mesh.material.dispose();
+  if (mesh.userData.ownsGeom) mesh.geometry.dispose();
+  if (mesh.userData.ownsEdges && mesh.children[0]?.geometry) mesh.children[0].geometry.dispose();
   objects.delete(id);
   updateCount();
   updateSelectionVisuals();
@@ -226,7 +276,7 @@ function deleteObject(id) {
 }
 
 function snapshotMesh(mesh) {
-  return {
+  const s = {
     id: mesh.userData.id,
     shape: mesh.userData.shape,
     color: mesh.userData.color,
@@ -234,6 +284,8 @@ function snapshotMesh(mesh) {
     rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
     scale: mesh.scale.toArray(),
   };
+  if (mesh.userData.profile) s.profile = JSON.parse(JSON.stringify(mesh.userData.profile));
+  return s;
 }
 
 function clearAll() {
@@ -419,6 +471,33 @@ function onPointerUp(event) {
 
   const hit = intersectAt(event);
 
+  if (tool === 'sketch') {
+    if (sketch.closed) return;
+    const p = projectToGround(event);
+    if (!p) return;
+    if (sketch.tool === 'rect') {
+      sketch.points.push(p);
+      if (sketch.points.length === 2) finalizeSketch();
+      else rebuildSketchPreview();
+    } else if (sketch.tool === 'circle') {
+      sketch.points.push(p);
+      if (sketch.points.length === 2) finalizeSketch();
+      else rebuildSketchPreview();
+    } else if (sketch.tool === 'poly') {
+      // Close if clicking near first point.
+      if (sketch.points.length >= 2) {
+        const a = sketch.points[0];
+        if (Math.hypot(p.x - a.x, p.z - a.z) < 0.25) {
+          finalizeSketch();
+          return;
+        }
+      }
+      sketch.points.push(p);
+      rebuildSketchPreview();
+    }
+    return;
+  }
+
   if (tool === 'select') {
     if (!hit || hit.object === ground) {
       if (!shift) selectOnly(null);
@@ -567,14 +646,216 @@ setShape('cube');
 function setTool(name) {
   tool = name;
   for (const el of toolsEl.children) el.classList.toggle('active', el.dataset.tool === name);
-  canvas.style.cursor = name === 'place' ? 'crosshair' : 'default';
+  canvas.style.cursor = (name === 'place' || name === 'sketch') ? 'crosshair' : 'default';
   if (name !== 'select') transform.detach();
   else updateSelectionVisuals();
+
+  const sketchRow = document.getElementById('sketchRow');
+  if (sketchRow) sketchRow.classList.toggle('hidden', name !== 'sketch');
+  if (name !== 'sketch') {
+    if (typeof resetSketch === 'function') resetSketch();
+  }
 }
 
 for (const el of toolsEl.children) {
   el.addEventListener('click', () => setTool(el.dataset.tool));
 }
+
+// --- Sketch session ---------------------------------------------------------
+// Active only when tool === 'sketch'. Draws on the world XZ ground plane.
+const sketch = {
+  tool: 'rect',        // 'rect' | 'circle' | 'poly'
+  points: [],          // array of {x, z}
+  hover: null,         // current cursor position on plane
+  preview: null,       // THREE.Line group for the in-progress sketch
+  closed: false,       // becomes true when a profile is finished
+  profile: null,       // {type, points, height?, radius?} once closed
+};
+
+const sketchGroup = new THREE.Group();
+scene.add(sketchGroup);
+
+const sketchMat = new THREE.LineBasicMaterial({ color: 0x5ec8ff, linewidth: 2 });
+const sketchMatGhost = new THREE.LineBasicMaterial({ color: 0x5ec8ff, transparent: true, opacity: 0.45 });
+
+function clearSketchPreview() {
+  while (sketchGroup.children.length) {
+    const c = sketchGroup.children.pop();
+    c.geometry?.dispose();
+  }
+}
+
+function rebuildSketchPreview() {
+  clearSketchPreview();
+  if (sketch.points.length === 0 && !sketch.hover) return;
+
+  if (sketch.tool === 'rect') {
+    const a = sketch.points[0];
+    const b = sketch.points[1] || sketch.hover;
+    if (!a || !b) return;
+    addRectPreview(a, b, sketch.points.length === 2);
+  } else if (sketch.tool === 'circle') {
+    const c = sketch.points[0];
+    const edge = sketch.points[1] || sketch.hover;
+    if (!c || !edge) return;
+    const r = Math.hypot(edge.x - c.x, edge.z - c.z);
+    addCirclePreview(c, r, sketch.points.length === 2);
+  } else if (sketch.tool === 'poly') {
+    addPolyPreview(sketch.points, sketch.hover, sketch.closed);
+  }
+
+  // dots at vertices
+  for (const p of sketch.points) addDot(p);
+}
+
+function addRectPreview(a, b, solid) {
+  const x1 = a.x, x2 = b.x, z1 = a.z, z2 = b.z;
+  const pts = [
+    new THREE.Vector3(x1, 0.01, z1),
+    new THREE.Vector3(x2, 0.01, z1),
+    new THREE.Vector3(x2, 0.01, z2),
+    new THREE.Vector3(x1, 0.01, z2),
+    new THREE.Vector3(x1, 0.01, z1),
+  ];
+  const g = new THREE.BufferGeometry().setFromPoints(pts);
+  sketchGroup.add(new THREE.Line(g, solid ? sketchMat : sketchMatGhost));
+}
+
+function addCirclePreview(c, r, solid) {
+  const segs = 64;
+  const pts = [];
+  for (let i = 0; i <= segs; i++) {
+    const a = i / segs * Math.PI * 2;
+    pts.push(new THREE.Vector3(c.x + Math.cos(a) * r, 0.01, c.z + Math.sin(a) * r));
+  }
+  const g = new THREE.BufferGeometry().setFromPoints(pts);
+  sketchGroup.add(new THREE.Line(g, solid ? sketchMat : sketchMatGhost));
+}
+
+function addPolyPreview(points, hover, closed) {
+  if (points.length === 0) return;
+  const v3 = points.map(p => new THREE.Vector3(p.x, 0.01, p.z));
+  if (!closed && hover) v3.push(new THREE.Vector3(hover.x, 0.01, hover.z));
+  if (closed) v3.push(v3[0].clone());
+  const g = new THREE.BufferGeometry().setFromPoints(v3);
+  sketchGroup.add(new THREE.Line(g, closed ? sketchMat : sketchMatGhost));
+}
+
+function addDot(p) {
+  const g = new THREE.SphereGeometry(0.06, 8, 8);
+  const m = new THREE.MeshBasicMaterial({ color: 0x5ec8ff });
+  const dot = new THREE.Mesh(g, m);
+  dot.position.set(p.x, 0.02, p.z);
+  sketchGroup.add(dot);
+}
+
+function snapPoint(p) {
+  if (!snapEnabled) return p;
+  return { x: Math.round(p.x * 2) / 2, z: Math.round(p.z * 2) / 2 };
+}
+
+function projectToGround(event) {
+  setPointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObject(ground, false)[0];
+  if (!hit) return null;
+  return snapPoint({ x: hit.point.x, z: hit.point.z });
+}
+
+function resetSketch(keepTool = true) {
+  sketch.points = [];
+  sketch.hover = null;
+  sketch.closed = false;
+  sketch.profile = null;
+  if (!keepTool) sketch.tool = 'rect';
+  clearSketchPreview();
+  document.getElementById('extrudeBtn').disabled = true;
+}
+
+function finalizeSketch() {
+  if (sketch.tool === 'rect' && sketch.points.length === 2) {
+    sketch.closed = true;
+    sketch.profile = { type: 'rect', points: sketch.points.slice() };
+  } else if (sketch.tool === 'circle' && sketch.points.length === 2) {
+    const c = sketch.points[0];
+    const e = sketch.points[1];
+    const r = Math.hypot(e.x - c.x, e.z - c.z);
+    if (r < 0.05) return false;
+    sketch.closed = true;
+    sketch.profile = { type: 'circle', points: [c], radius: r };
+  } else if (sketch.tool === 'poly' && sketch.points.length >= 3) {
+    sketch.closed = true;
+    sketch.profile = { type: 'poly', points: sketch.points.slice() };
+  } else {
+    return false;
+  }
+  document.getElementById('extrudeBtn').disabled = false;
+  rebuildSketchPreview();
+  return true;
+}
+
+function extrudeFromSketch() {
+  if (!sketch.profile) return;
+  const height = Math.max(0.05, parseFloat(document.getElementById('extrudeHeight').value) || 1);
+  const profile = { ...sketch.profile, height };
+  // Compute centroid so the mesh's origin is its centroid (good for transforms).
+  let cx = 0, cz = 0, n = 0;
+  if (profile.type === 'circle') {
+    cx = profile.points[0].x; cz = profile.points[0].z; n = 1;
+  } else {
+    for (const p of profile.points) { cx += p.x; cz += p.z; n++; }
+    cx /= n; cz /= n;
+  }
+  // Re-anchor profile points relative to centroid, place mesh at (cx, 0, cz).
+  const localProfile = { ...profile };
+  if (localProfile.type === 'circle') {
+    localProfile.points = [{ x: 0, z: 0 }];
+  } else {
+    localProfile.points = profile.points.map(p => ({ x: p.x - cx, z: p.z - cz }));
+  }
+
+  const mesh = addObject({
+    shape: 'extrusion', color: currentColor, profile: localProfile,
+    position: [cx, 0, cz], rotation: [0, 0, 0], scale: [1, 1, 1],
+  });
+  pushUndo({ type: 'create', snap: snapshotMesh(mesh) });
+  selectOnly(mesh.userData.id);
+  resetSketch();
+  setTool('select');
+}
+
+function setSketchTool(name) {
+  sketch.tool = name;
+  resetSketch();
+  for (const el of document.querySelectorAll('#sketchTools .tool')) {
+    el.classList.toggle('active', el.dataset.stool === name);
+  }
+}
+
+for (const el of document.querySelectorAll('#sketchTools .tool')) {
+  el.addEventListener('click', () => setSketchTool(el.dataset.stool));
+}
+setSketchTool('rect');
+
+document.getElementById('extrudeBtn').addEventListener('click', extrudeFromSketch);
+document.getElementById('finishPoly').addEventListener('click', () => {
+  if (sketch.tool === 'poly') finalizeSketch();
+});
+document.getElementById('cancelSketch').addEventListener('click', () => {
+  resetSketch();
+  setTool('select');
+});
+
+canvas.addEventListener('pointermove', (event) => {
+  if (tool !== 'sketch' || sketch.closed) return;
+  sketch.hover = projectToGround(event);
+  rebuildSketchPreview();
+});
+
+canvas.addEventListener('dblclick', () => {
+  if (tool === 'sketch' && sketch.tool === 'poly') finalizeSketch();
+});
+
 setTool('select');
 
 for (const el of transformModesEl.children) {
@@ -739,9 +1020,18 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelection(); return; }
-  if (e.key === 'Escape') { selectOnly(null); return; }
+  if (e.key === 'Escape') {
+    if (tool === 'sketch') { resetSketch(); setTool('select'); return; }
+    selectOnly(null);
+    return;
+  }
+  if (e.key === 'Enter') {
+    if (tool === 'sketch' && sketch.tool === 'poly') finalizeSketch();
+    return;
+  }
   if (e.key === 'v' || e.key === 'V') { setTool('select'); return; }
   if (e.key === 'b' || e.key === 'B') { setTool('place'); return; }
+  if (e.key === 'k' || e.key === 'K') { setTool('sketch'); return; }
   if (e.key === 'w' || e.key === 'W') { setTransformMode('translate'); return; }
   if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); return; }
   if (e.key === 'r' || e.key === 'R') { setTransformMode('scale'); return; }

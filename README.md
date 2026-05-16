@@ -4,7 +4,8 @@ A 3D voxel block builder in the browser. Click to place blocks, Shift+Click to r
 
 ## Features
 
-- **Select / Place tools** — `V` to select, `B` to place
+- **Sketch & extrude** — `K` sketch mode: draw a rectangle, circle, or polyline on the ground plane and extrude into a printable 3D solid
+- **Select / Place / Sketch tools** — `V` to select, `B` to place, `K` to sketch
 - **Transform gizmo** — `W` move, `E` rotate, `R` scale (free-form, off-grid)
 - **Multi-select** — Shift-click adds/removes; `Ctrl/Cmd+A` selects all
 - **Undo / redo** — `Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z` or `Ctrl/Cmd+Y`
